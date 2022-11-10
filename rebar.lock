@@ -1,8 +1,11 @@
 {"1.2.0",
-[{<<"parse_trans">>,{pkg,<<"parse_trans">>,<<"3.4.1">>},0}]}.
+[{<<"color">>,{pkg,<<"erlang_color">>,<<"1.0.0">>},0},
+ {<<"parse_trans">>,{pkg,<<"parse_trans">>,<<"3.4.1">>},0}]}.
 [
 {pkg_hash,[
+ {<<"color">>, <<"145FE1D2E65C4516E4F03FEFCA6C2F47EBAD5899D978D70382A5CFE643E4AC9E">>},
  {<<"parse_trans">>, <<"6E6AA8167CB44CC8F39441D05193BE6E6F4E7C2946CB2759F015F8C56B76E5FF">>}]},
 {pkg_hash_ext,[
+ {<<"color">>, <<"6B17E5E589C8FEF540574C9EA32B67CEC2C8A44283AAFE474D6E5818FB3EE038">>},
  {<<"parse_trans">>, <<"620A406CE75DADA827B82E453C19CF06776BE266F5A67CFF34E1EF2CBB60E49A">>}]}
 ].

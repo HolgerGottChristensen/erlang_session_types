@@ -3,25 +3,186 @@
 -export([parse_transform/2]).
 
 parse_transform(Forms, _Options) ->
-  Graph = digraph:new(),
-  digraph:add_vertex(Graph, initial),
-  create_fsm(Graph, [
-    {send, int},
-    {recv, int},
-    eot
-  ], initial),
-  %digraph:add_vertex(Graph, test),
-  %digraph:add_edge(Graph, test_edge, test, test, []),
-  %digraph:add_edge(Graph, test_edge2, test, test, []),
-  io:fwrite("Forms = ~p~n", [Forms]),
-  {_, Vertices, Edges, Neighbours, Cyclic} = Graph,
-  io:fwrite("Nodes: ~n", []),
-  lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(Vertices)),
+  ets:new(register, [named_table]),
+  ets:new(session, [named_table]),
+  ets:new(session_graphs, [named_table]),
+  ets:new(current_session, [named_table]),
 
-  io:fwrite("~nEdges: ~n", []),
-  lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(Edges)),
+  parse_trans:plain_transform(fun do_transform/1, Forms),
+
+  lists:foreach(
+    fun({K, V}) ->
+      Graph = digraph:new(),
+      digraph:add_vertex(Graph, initial),
+      create_fsm(Graph, V, initial),
+      ets:insert(session_graphs, {K, Graph})
+    end, ets:tab2list(session)
+  ),
+
+  lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(register)),
+  lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(session)),
+
+  lists:foreach(
+    fun({K, Graph}) ->
+      io:fwrite("~n==== Graph: ~p ====~n", [K]),
+      {_, Vertices, Edges, _Neighbours, _Cyclic} = Graph,
+      io:fwrite("Nodes: ~n", []),
+      lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(Vertices)),
+
+      io:fwrite("Edges: ~n", []),
+      lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(Edges)),
+      io:fwrite("========================~n", [])
+    end, ets:tab2list(session_graphs)
+  ),
+
+
+  parse_trans:plain_transform(fun check_sessions/1, Forms),
+
   Forms.
 
+
+
+check_function_session({op, _, '!', {atom, _, To}, {tuple, _, [{atom, _, Self}, {Ty, _, V}]}}) ->
+  lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
+  [[Graph]] = ets:match(session_graphs, {{Self, To}, '$0'}),
+  [[CurrentState]] = ets:match(current_session, {To, '$0'}),
+  % Check the type of the send matches with the session.
+
+  OutEdges = digraph:out_edges(Graph, CurrentState),
+  OutEdgesMapped = lists:map(fun (G) -> digraph:edge(Graph, G) end, OutEdges),
+
+  K = lists:search(
+    fun(T) ->
+      case T of
+        {_, _, _, [{send, Ty}]} -> true;
+        _ -> false
+      end
+    end, OutEdgesMapped),
+
+  case K of
+    {value, {_, _, ResState, _}} ->
+      io:fwrite("Found: ~p~n", [ResState]),
+      ets:insert(current_session, {To, ResState}),
+      io:fwrite("Send: ~p, To: ~p~n~n", [V, To]),
+
+      lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
+      continue;
+    false ->
+      {error, io:format("~s~w~n", [color:red("Could not find a suitable send edge in the fsm with type: "), Ty])}
+  end;
+check_function_session({'receive', _, [{clause, _, [{tuple, _, [{atom, _, From}, {var, _, Val}]}], [[{call, _, {atom, _, TyFun}, [{var, _, Val}]}]], _}]}) ->
+  io:fwrite("Receive: ~p ~p ~p~n~n", [From, TyFun, Val]),
+  lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
+  [[Graph]] = ets:match(session_graphs, {{'_', From}, '$0'}),
+  [[CurrentState]] = ets:match(current_session, {From, '$0'}),
+  % Check the type of the send matches with the session.
+
+  OutEdges = digraph:out_edges(Graph, CurrentState),
+  OutEdgesMapped = lists:map(fun (G) -> digraph:edge(Graph, G) end, OutEdges),
+
+  Ty = case TyFun of
+         is_integer -> integer;
+         is_atom -> atom;
+         is_float -> float;
+         is_boolean -> boolean;
+         is_bitstring -> string;
+         _ -> error
+       end,
+
+  K = lists:search(
+    fun(T) ->
+      case T of
+        {_, _, _, [{recv, Ty}]} -> true;
+        _ -> false
+      end
+    end, OutEdgesMapped),
+
+  case K of
+    {value, {_, _, ResState, _}} ->
+      io:fwrite("Found: ~p~n", [ResState]),
+      ets:insert(current_session, {From, ResState}),
+      %io:fwrite("Send: ~p, To: ~p~n~n", [V, From]),
+
+      lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
+      continue;
+    false ->
+      {error, io:format("~s~w~n", [color:red("Could not find a suitable recv edge in the fsm with type: "), Ty])}
+  end;
+check_function_session({op, _, '!', Receiver, {tuple, _, [{atom, _, _}, {_, _, _}]}}) ->
+  {error, io:format("~s~w~n", [color:red("The thing sent to, is required to be an atom but was: "), Receiver])};
+check_function_session({op, _, '!', _, {tuple, _, [Error, {Ty, _, V}]}}) ->
+  {error, io:format("~s~w~n", [color:red("The message sent, must contain the receiver id as the first element: "), Error])};
+check_function_session({op, _, '!', _, {tuple, _, [_, Error]}}) ->
+  {error, io:format("~s~w~n", [color:red("We only support sending primitive values: "), Error])};
+check_function_session({op, _, '!', _, Error}) ->
+  {error, io:format("~s~w~n", [color:red("The thing to be sent must be a tuple: "), Error])};
+check_function_session({op, _, Error, _, _}) ->
+  {error, io:format("~s~w~n", [color:red("Only the ! operator is supported: "), Error])};
+check_function_session({call, _, Error, _}) ->
+  %{error, io:format("~s~w~n", [color:red("You are not allowed to make function calls: "), Error])};
+  continue;
+check_function_session(T) ->
+  io:fwrite("Not considered: ~p~n~n", [T]),
+  continue.
+
+check_sessions({function, _, Name, 0, Body}) ->
+  case ets:match(register, {Name, '$0'}) of
+    [] -> continue;
+    [[T]] ->
+      ets:delete_all_objects(current_session),
+      lists:foreach(
+        fun({{K1, K2}, _}) ->
+          if
+            K1 == T -> ets:insert(current_session, {K2, initial});
+            true -> ok
+          end
+        end, ets:tab2list(session_graphs)
+      ),
+      io:fwrite("Check Session for: ~p ~p~n~n", [Name, T]),
+      parse_trans:plain_transform(fun check_function_session/1, Body),
+
+      % Check that all current states are in a final state
+      InFinal = lists:filter(
+        fun ({To, CurrentState}) ->
+          [[Graph]] = ets:match(session_graphs, {{T, To}, '$0'}),
+          case digraph:vertex(Graph, CurrentState) of
+              {_, [final]} -> false;
+              _ -> true
+          end
+        end, ets:tab2list(current_session)),
+      case InFinal of
+        [] -> continue;
+        B -> {error, io:format("~s~w~n", [color:red("The states are not in a final state: "), B])}
+      end
+  end;
+check_sessions({function, _, _, Error, _}) ->
+  {error, io:format("~s~w~n", [color:red("Only functions of arity 0 are allowed: "), Error])};
+check_sessions(T) ->
+  %io:fwrite("Not considered: ~p~n~n", [T]),
+  continue.
+
+do_transform({attribute, _, session, {{Key1, Key2}, Value}}) ->
+  ets:insert(session, {{Key1, Key2}, Value}),
+  ets:insert(session, {{Key2, Key1}, dualize(Value)}),
+  io:fwrite("Session Attribute: ~p~n~n", [Value]),
+  continue;
+do_transform({attribute, _, register, Value}) ->
+  ets:insert(register, Value),
+  io:fwrite("Register Attribute: ~p~n~n", [Value]),
+  continue;
+do_transform(T) ->
+  %io:fwrite("Not considered: ~p~n~n", [T]),
+  continue.
+
+dualize(SessionType) ->
+  lists:map(
+    fun (T) ->
+      case T of
+        {send, U} -> {recv, U};
+        {recv, U} -> {send, U};
+        eot -> eot
+      end
+    end, SessionType).
 
 create_fsm(Graph, [Head | Tail], CurrentNode) ->
   case Head of
@@ -36,5 +197,5 @@ create_fsm(Graph, [Head | Tail], CurrentNode) ->
     eot ->
       digraph:add_vertex(Graph, CurrentNode, [final])
   end;
-create_fsm(Graph, [], CurrentNode) ->
+create_fsm(_Graph, [], _CurrentNode) ->
   ok.
