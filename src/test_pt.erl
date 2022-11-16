@@ -24,14 +24,14 @@ parse_transform(Forms, _Options) ->
 
   lists:foreach(
     fun({K, Graph}) ->
-      io:fwrite("~n==== Graph: ~p ====~n", [K]),
+      %io:fwrite("~n==== Graph: ~p ====~n", [K]),
       {_, Vertices, Edges, _Neighbours, _Cyclic} = Graph,
-      io:fwrite("Nodes: ~n", []),
+      %io:fwrite("Nodes: ~n", []),
       lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(Vertices)),
 
-      io:fwrite("Edges: ~n", []),
-      lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(Edges)),
-      io:fwrite("========================~n", [])
+      %io:fwrite("Edges: ~n", []),
+      lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(Edges))
+      %io:fwrite("========================~n", [])
     end, ets:tab2list(session_graphs)
   ),
 
@@ -61,9 +61,9 @@ check_function_session({op, _, '!', {atom, _, To}, {tuple, _, [{atom, _, Self}, 
 
   case K of
     {value, {_, _, ResState, _}} ->
-      io:fwrite("Found: ~p~n", [ResState]),
+      %io:fwrite("Found: ~p~n", [ResState]),
       ets:insert(current_session, {To, ResState}),
-      io:fwrite("Send: ~p, To: ~p~n~n", [V, To]),
+      %io:fwrite("Send: ~p, To: ~p~n~n", [V, To]),
 
       lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
       continue;
@@ -122,7 +122,7 @@ check_function_session({call, _, Error, _}) ->
   %{error, io:format("~s~w~n", [color:red("You are not allowed to make function calls: "), Error])};
   continue;
 check_function_session(T) ->
-  io:fwrite("Not considered: ~p~n~n", [T]),
+  %io:fwrite("Not considered: ~p~n~n", [T]),
   continue.
 
 check_sessions({function, _, Name, 0, Body}) ->
@@ -138,7 +138,7 @@ check_sessions({function, _, Name, 0, Body}) ->
           end
         end, ets:tab2list(session_graphs)
       ),
-      io:fwrite("Check Session for: ~p ~p~n~n", [Name, T]),
+      %io:fwrite("Check Session for: ~p ~p~n~n", [Name, T]),
       parse_trans:plain_transform(fun check_function_session/1, Body),
 
       % Check that all current states are in a final state
