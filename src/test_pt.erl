@@ -42,11 +42,12 @@ parse_transform(Forms, _Options) ->
 
 
 
-check_function_session(Self, {op, L1, '!', {atom, L2, To}, {tuple, L3, [{atom, L4, Self}, {Ty, L5, V}]}}) ->
+check_function_session(Self, CurrentStates, {op, _, '!', {atom, _, To}, {tuple, _, [{atom, _, Self}, {Ty, _, V}]}}) ->
+  %io:fwrite("Send: ~n", []),
   %lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
 
   [[Graph]] = ets:match(session_graphs, {{Self, To}, '$0'}),
-  [[CurrentState]] = ets:match(current_session, {To, '$0'}),
+  {ok, CurrentState} = dict:find(To, CurrentStates),
   % Check the type of the send matches with the session.
 
   OutEdges = digraph:out_edges(Graph, CurrentState),
@@ -63,20 +64,20 @@ check_function_session(Self, {op, L1, '!', {atom, L2, To}, {tuple, L3, [{atom, L
   case K of
     {value, {_, _, ResState, _}} ->
       %io:fwrite("Found: ~p~n", [ResState]),
-      ets:insert(current_session, {To, ResState}),
+      NewCurrentStates = dict:store(To, ResState, CurrentStates),
       %io:fwrite("Send: ~p, To: ~p~n~n", [V, To]),
 
       %lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
-      {op, L1, '!', {atom, L2, To}, {tuple, L3, [{atom, L4, Self}, {Ty, L5, V}]}};
+      {ok, NewCurrentStates};
     false ->
       {error, io:format("~s~w~n", [color:red("Could not find a suitable send edge in the fsm with type: "), Ty])}
   end;
-check_function_session(Self, {'receive', L1, [{clause, L2, [{tuple, L3, [{atom, L4, From}, {var, L5, Val}]}], [[{call, L6, {atom, L7, TyFun}, [{var, L8, Val}]}]], Body}]}) ->
+check_function_session(Self, CurrentStates, {'receive', _, [{clause, _, [{tuple, _, [{atom, _, From}, {var, _, Val}]}], [[{call, _, {atom, _, TyFun}, [{var, _, Val}]}]], Body}]}) ->
   %io:fwrite("Receive: ~p ~p ~p~n~n", [From, TyFun, Val]),
   %lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
 
   [[Graph]] = ets:match(session_graphs, {{Self, From}, '$0'}),
-  [[CurrentState]] = ets:match(current_session, {From, '$0'}),
+  {ok, CurrentState} = dict:find(From, CurrentStates),
   % Check the type of the send matches with the session.
 
   OutEdges = digraph:out_edges(Graph, CurrentState),
@@ -102,64 +103,93 @@ check_function_session(Self, {'receive', L1, [{clause, L2, [{tuple, L3, [{atom, 
   case K of
     {value, {_, _, ResState, _}} ->
       %io:fwrite("Found: ~p~n", [ResState]),
-      ets:insert(current_session, {From, ResState}),
+      NewCurrentStates = dict:store(From, ResState, CurrentStates),
       %io:fwrite("Send: ~p, To: ~p~n~n", [V, From]),
 
       %lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
-      parse_trans:plain_transform(fun (A) -> check_function_session(Self, A) end, Body),
+      NewCurrentStates2 = check_function_session(Self, NewCurrentStates, Body),
 
-      {'receive', L1, [{clause, L2, [{tuple, L3, [{atom, L4, From}, {var, L5, Val}]}], [[{call, L6, {atom, L7, TyFun}, [{var, L8, Val}]}]], Body}]};
+      NewCurrentStates2;
     false ->
       {error, io:format("~s~w~n", [color:red("Could not find a suitable recv edge in the fsm with type: "), Ty])}
   end;
-check_function_session(Self, {op, _, '!', Receiver, {tuple, _, [{atom, _, _}, {_, _, _}]}}) ->
+check_function_session(_, _, {op, _, '!', Receiver, {tuple, _, [{atom, _, _}, {_, _, _}]}}) ->
   {error, io:format("~s~w~n", [color:red("The thing sent to, is required to be an atom but was: "), Receiver])};
-check_function_session(Self, {op, _, '!', _, {tuple, _, [Error, {Ty, _, V}]}}) ->
+check_function_session(_, _, {op, _, '!', _, {tuple, _, [Error, {Ty, _, V}]}}) ->
   {error, io:format("~s~w~n", [color:red("The message sent, must contain the receiver id as the first element: "), Error])};
-check_function_session(Self, {op, _, '!', _, {tuple, _, [_, Error]}}) ->
+check_function_session(_, _, {op, _, '!', _, {tuple, _, [_, Error]}}) ->
   {error, io:format("~s~w~n", [color:red("We only support sending primitive values: "), Error])};
-check_function_session(Self, {op, _, '!', _, Error}) ->
+check_function_session(_, _, {op, _, '!', _, Error}) ->
   {error, io:format("~s~w~n", [color:red("The thing to be sent must be a tuple: "), Error])};
-check_function_session(Self, {op, _, Error, _, _}) ->
+check_function_session(_, _, {op, _, Error, _, _}) ->
   {error, io:format("~s~w~n", [color:red("Only the ! operator is supported: "), Error])};
-check_function_session(Self, {call, L1, Error, L2}) ->
+check_function_session(_, CurrentStates, {call, _, Error, _}) ->
   io:fwrite("~s~w~n", [color:yellow("Function calls are currently not considered: "), Error]),
-  {call, L1, Error, L2};
-check_function_session(Self, T) ->
-  io:fwrite("Not matched against: ~p~n~n", [T]),
-  continue.
+  {ok, CurrentStates};
+check_function_session(Self, CurrentStates, [StmtHd | StmtTail]) ->
+  lists:foldl(
+    fun (Elem, Acc) ->
+      case Acc of
+        {ok, New} -> check_function_session(Self, New, Elem);
+        A -> A
+      end
+    end, {ok, CurrentStates}, [StmtHd | StmtTail]);
+check_function_session(Self, CurrentStates, {clause, _, _, _, Body}) ->
+  check_function_session(Self, CurrentStates, Body);
+check_function_session(Self, CurrentStates, {'if', _, Clauses}) ->
+  Mapped = lists:map(fun ({clause, _, _, _, Body}) -> check_function_session(Self, CurrentStates, Body) end, Clauses),
+  V = lists:all(fun (Elem) -> Elem == lists:nth(1, Mapped) end, Mapped),
+  if
+    V -> lists:nth(1, Mapped);
+    true -> {error, io:format("~s~n", [color:red("All cases are not equal")])}
+  end;
+check_function_session(Self, CurrentStates, {'case', _, _, Clauses}) ->
+  Mapped = lists:map(fun ({clause, _, _, _, Body}) -> check_function_session(Self, CurrentStates, Body) end, Clauses),
+  V = lists:all(fun (Elem) -> Elem == lists:nth(1, Mapped) end, Mapped),
+  if
+    V -> lists:nth(1, Mapped);
+    true -> {error, io:format("~s~n", [color:red("All cases are not equal")])}
+  end;
+check_function_session(_, _, T) ->
+  {error, io:format("~s~p~n~n", [color:red("Not matched against: "), T])}.
 
 check_sessions({function, _, Name, 0, Body}) ->
   case ets:match(register, {Name, '$0'}) of
     [] -> continue;
     [[T]] ->
-      ets:delete_all_objects(current_session),
-      lists:foreach(
-        fun({{K1, K2}, _}) ->
-          if
-            K1 == T -> ets:insert(current_session, {K2, initial});
-            true -> ok
-          end
-        end, ets:tab2list(session_graphs)
-      ),
-      io:fwrite("=== Check Session for: ~p ~p ===~n", [Name, T]),
-      lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
-      io:fwrite("======~n~n", []),
-      parse_trans:plain_transform(fun (A) -> check_function_session(T, A) end, Body),
+      % Create a list of things to insert into the state
+      RelevantList = lists:filter(fun({{K1, K2}, _}) -> K1 == T end, ets:tab2list(session_graphs)),
+      MappedRelevantList = lists:map(fun({{K1, K2}, _}) -> {K2, initial} end, RelevantList),
 
-      % Check that all current states are in a final state
-      InFinal = lists:filter(
-        fun ({To, CurrentState}) ->
-          [[Graph]] = ets:match(session_graphs, {{T, To}, '$0'}),
-          case digraph:vertex(Graph, CurrentState) of
-              {_, [final]} -> false;
-              _ -> true
-          end
-        end, ets:tab2list(current_session)),
-      case InFinal of
-        [] -> continue;
-        B -> {error, io:format("~s~w~n", [color:red("The states are not in a final state: "), B])}
+      % Create dict from list
+      CurrentStates = dict:from_list(MappedRelevantList),
+
+      io:fwrite("=== Check Session for: ~p ~p ===~n", [Name, T]),
+      lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, dict:to_list(CurrentStates)),
+      io:fwrite("======~n", []),
+      %io:fwrite("~p~n", [Body]),
+      %io:fwrite("======~n~n", []),
+
+      case check_function_session(T, CurrentStates, Body) of
+        {ok, FinalState} ->
+          % Check that all current states are in a final state
+          InFinal = lists:filter(
+            fun ({To, CurrentState}) ->
+              [[Graph]] = ets:match(session_graphs, {{T, To}, '$0'}),
+              case digraph:vertex(Graph, CurrentState) of
+                {_, [final]} -> false;
+                _ -> true
+              end
+            end, dict:to_list(FinalState)),
+          case InFinal of
+            [] -> continue;
+            B -> {error, io:format("~s~w~n", [color:red("The states are not in a final state: "), B])}
+          end;
+        {error, Message} ->
+          {error, Message}
       end
+
+
   end;
 check_sessions({function, _, _, Error, _}) ->
   {error, io:format("~s~w~n", [color:red("Only functions of arity 0 are allowed: "), Error])};

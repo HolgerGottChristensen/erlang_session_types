@@ -42,12 +42,16 @@ main() ->
 
 hello1() ->
   id2 ! {id1, 42},
-  %case false of
-  %  false -> id2 ! {id1, nice};
-  %  true -> id2 ! {id1, nice}
-  %end,
-  id2 ! {id1, nice},
-  id3 ! {id1, 42},
+  case false of
+    false -> id2 ! {id1, nice};
+    true -> id2 ! {id1, nice}
+  end,
+  %id2 ! {id1, nice},
+  if
+    false -> id3 ! {id1, 42};
+    true -> id3 ! {id1, 420}
+  end,
+  % id3 ! {id1, 42},
   receive {id2, Val} when is_integer(Val) ->
     io:fwrite("Forms = ~p~n", [Val])
   end.
