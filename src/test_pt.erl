@@ -24,26 +24,26 @@ parse_transform(Forms, _Options) ->
 
   lists:foreach(
     fun({K, Graph}) ->
-      io:fwrite("~n==== Graph: ~p ====~n", [K]),
+      io:fwrite("==== Graph: ~p ====~n", [K]),
       {_, Vertices, Edges, _Neighbours, _Cyclic} = Graph,
       io:fwrite("Nodes: ~n", []),
       lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(Vertices)),
 
       io:fwrite("Edges: ~n", []),
       lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(Edges)),
-      io:fwrite("========================~n", [])
+      io:fwrite("========================~n~n", [])
     end, ets:tab2list(session_graphs)
   ),
 
 
   parse_trans:plain_transform(fun check_sessions/1, Forms),
-
+  io:fwrite("~s~n", [color:green("Session types type checks!")]),
   Forms.
 
 
 
-check_function_session(Self, {op, _, '!', {atom, _, To}, {tuple, _, [{atom, _, Self}, {Ty, _, V}]}}) ->
-  lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
+check_function_session(Self, {op, L1, '!', {atom, L2, To}, {tuple, L3, [{atom, L4, Self}, {Ty, L5, V}]}}) ->
+  %lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
 
   [[Graph]] = ets:match(session_graphs, {{Self, To}, '$0'}),
   [[CurrentState]] = ets:match(current_session, {To, '$0'}),
@@ -66,18 +66,15 @@ check_function_session(Self, {op, _, '!', {atom, _, To}, {tuple, _, [{atom, _, S
       ets:insert(current_session, {To, ResState}),
       %io:fwrite("Send: ~p, To: ~p~n~n", [V, To]),
 
-      lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
-      continue;
+      %lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
+      {op, L1, '!', {atom, L2, To}, {tuple, L3, [{atom, L4, Self}, {Ty, L5, V}]}};
     false ->
       {error, io:format("~s~w~n", [color:red("Could not find a suitable send edge in the fsm with type: "), Ty])}
   end;
-check_function_session(Self, {'receive', _, [{clause, _, [{tuple, _, [{atom, _, From}, {var, _, Val}]}], [[{call, _, {atom, _, TyFun}, [{var, _, Val}]}]], _}]}) ->
-  io:fwrite("Receive: ~p ~p ~p~n~n", [From, TyFun, Val]),
-  lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
+check_function_session(Self, {'receive', L1, [{clause, L2, [{tuple, L3, [{atom, L4, From}, {var, L5, Val}]}], [[{call, L6, {atom, L7, TyFun}, [{var, L8, Val}]}]], Body}]}) ->
+  %io:fwrite("Receive: ~p ~p ~p~n~n", [From, TyFun, Val]),
+  %lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
 
-
-  A = ets:match(session_graphs, {{Self, From}, '$0'}),
-  io:fwrite("A: ~p~n", [A]),
   [[Graph]] = ets:match(session_graphs, {{Self, From}, '$0'}),
   [[CurrentState]] = ets:match(current_session, {From, '$0'}),
   % Check the type of the send matches with the session.
@@ -104,12 +101,14 @@ check_function_session(Self, {'receive', _, [{clause, _, [{tuple, _, [{atom, _, 
 
   case K of
     {value, {_, _, ResState, _}} ->
-      io:fwrite("Found: ~p~n", [ResState]),
+      %io:fwrite("Found: ~p~n", [ResState]),
       ets:insert(current_session, {From, ResState}),
       %io:fwrite("Send: ~p, To: ~p~n~n", [V, From]),
 
-      lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
-      continue;
+      %lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
+      parse_trans:plain_transform(fun (A) -> check_function_session(Self, A) end, Body),
+
+      {'receive', L1, [{clause, L2, [{tuple, L3, [{atom, L4, From}, {var, L5, Val}]}], [[{call, L6, {atom, L7, TyFun}, [{var, L8, Val}]}]], Body}]};
     false ->
       {error, io:format("~s~w~n", [color:red("Could not find a suitable recv edge in the fsm with type: "), Ty])}
   end;
@@ -123,11 +122,11 @@ check_function_session(Self, {op, _, '!', _, Error}) ->
   {error, io:format("~s~w~n", [color:red("The thing to be sent must be a tuple: "), Error])};
 check_function_session(Self, {op, _, Error, _, _}) ->
   {error, io:format("~s~w~n", [color:red("Only the ! operator is supported: "), Error])};
-check_function_session(Self, {call, _, Error, _}) ->
-  %{error, io:format("~s~w~n", [color:red("You are not allowed to make function calls: "), Error])};
-  continue;
+check_function_session(Self, {call, L1, Error, L2}) ->
+  io:fwrite("~s~w~n", [color:yellow("Function calls are currently not considered: "), Error]),
+  {call, L1, Error, L2};
 check_function_session(Self, T) ->
-  %io:fwrite("Not considered: ~p~n~n", [T]),
+  io:fwrite("Not matched against: ~p~n~n", [T]),
   continue.
 
 check_sessions({function, _, Name, 0, Body}) ->
@@ -145,7 +144,7 @@ check_sessions({function, _, Name, 0, Body}) ->
       ),
       io:fwrite("=== Check Session for: ~p ~p ===~n", [Name, T]),
       lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
-      io:fwrite("======~n", []),
+      io:fwrite("======~n~n", []),
       parse_trans:plain_transform(fun (A) -> check_function_session(T, A) end, Body),
 
       % Check that all current states are in a final state

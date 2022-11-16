@@ -11,7 +11,7 @@
 
 %% API
 -compile([{parse_transform, test_pt}]).
--export([main/0, hello1/0, hello2/0, parse/0]).
+-export([main/0, hello1/0, hello2/0, hello3/0, parse/0]).
 
 -register([
   {hello1, id1},
@@ -21,7 +21,7 @@
 
 -session({{id1, id2}, [
   {send, integer},
-  {send, integer},
+  {send, atom},
   {recv, integer},
   eot
 ]}).
@@ -42,7 +42,11 @@ main() ->
 
 hello1() ->
   id2 ! {id1, 42},
-  id2 ! {id1, 42},
+  %case false of
+  %  false -> id2 ! {id1, nice};
+  %  true -> id2 ! {id1, nice}
+  %end,
+  id2 ! {id1, nice},
   id3 ! {id1, 42},
   receive {id2, Val} when is_integer(Val) ->
     io:fwrite("Forms = ~p~n", [Val])
@@ -50,15 +54,17 @@ hello1() ->
 
 hello2() ->
   receive {id1, Val} when is_integer(Val) ->
-    io:fwrite("Forms = ~p~n", [Val])
-  end,
-  receive {id1, Val2} when is_integer(Val2) ->
-    io:fwrite("Forms = ~p~n", [Val2])
+    io:fwrite("Forms = ~p~n", [Val]),
+
+    receive {id1, Val2} when is_atom(Val2) ->
+      io:fwrite("Forms = ~p~n", [Val2])
+    end
+
   end,
   id1 ! {id2, 42}.
 
 hello3() ->
-  receive {id1, Val} when is_atom(Val) ->
+  receive {id1, Val} when is_integer(Val) ->
     io:fwrite("Forms = ~p~n", [Val])
   end.
 
