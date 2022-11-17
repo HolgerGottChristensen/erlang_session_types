@@ -57,6 +57,7 @@ check_function_session(Self, CurrentStates, {op, _, '!', {atom, _, To}, {tuple, 
     fun(T) ->
       case T of
         {_, _, _, [{send, Ty}]} -> true;
+        {_, _, _, [{choose, V}]} -> true;
         _ -> false
       end
     end, OutEdgesMapped),
@@ -70,7 +71,7 @@ check_function_session(Self, CurrentStates, {op, _, '!', {atom, _, To}, {tuple, 
       %lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
       {ok, NewCurrentStates};
     false ->
-      {error, io:format("~s~w~n", [color:red("Could not find a suitable send edge in the fsm with type: "), Ty])}
+      {error, io:format("~s~w. Found; ~w~n", [color:red("Could not find a suitable send edge in the fsm with type: "), Ty, OutEdgesMapped])}
   end;
 check_function_session(Self, CurrentStates, {'receive', _, [{clause, _, [{tuple, _, [{atom, _, From}, {var, _, Val}]}], [[{call, _, {atom, _, TyFun}, [{var, _, Val}]}]], Body}]}) ->
   %io:fwrite("Receive: ~p ~p ~p~n~n", [From, TyFun, Val]),
@@ -141,14 +142,14 @@ check_function_session(Self, CurrentStates, {'if', _, Clauses}) ->
   V = lists:all(fun (Elem) -> Elem == lists:nth(1, Mapped) end, Mapped),
   if
     V -> lists:nth(1, Mapped);
-    true -> {error, io:format("~s~n", [color:red("All cases are not equal")])}
+    true -> {error, io:format("~s~w~n", [color:red("All if branches are not equal: "), Mapped])}
   end;
 check_function_session(Self, CurrentStates, {'case', _, _, Clauses}) ->
   Mapped = lists:map(fun ({clause, _, _, _, Body}) -> check_function_session(Self, CurrentStates, Body) end, Clauses),
   V = lists:all(fun (Elem) -> Elem == lists:nth(1, Mapped) end, Mapped),
   if
     V -> lists:nth(1, Mapped);
-    true -> {error, io:format("~s~n", [color:red("All cases are not equal")])}
+    true -> {error, io:format("~s~w~n", [color:red("All cases are not equal: "), Mapped])}
   end;
 check_function_session(_, _, T) ->
   {error, io:format("~s~p~n~n", [color:red("Not matched against: "), T])}.
@@ -216,22 +217,41 @@ dualize(SessionType) ->
       case T of
         {send, U} -> {recv, U};
         {recv, U} -> {send, U};
+        {offer, U} -> {choose, lists:map(fun ({Label, S}) -> {Label, dualize(S)} end, U)};
+        {choose, U} -> {offer, lists:map(fun ({Label, S}) -> {Label, dualize(S)} end, U)};
         eot -> eot
       end
     end, SessionType).
 
-create_fsm(Graph, [Head | Tail], CurrentNode) ->
-  case Head of
-    {send, T} ->
+
+create_fsm(Graph, [eot | Tail], CurrentNode) ->
+  digraph:add_vertex(Graph, CurrentNode, [final]);
+
+create_fsm(Graph, [{send, T} | Tail], CurrentNode) ->
+  NewNode = digraph:add_vertex(Graph),
+  digraph:add_edge(Graph, CurrentNode, NewNode, [{send, T}]),
+  create_fsm(Graph, Tail, NewNode);
+create_fsm(Graph, [{recv, T} | Tail], CurrentNode) ->
+  NewNode = digraph:add_vertex(Graph),
+  digraph:add_edge(Graph, CurrentNode, NewNode, [{recv, T}]),
+  create_fsm(Graph, Tail, NewNode);
+create_fsm(Graph, [{choose, T} | Tail], CurrentNode) ->
+  % Create a state machine for each label
+  lists:map(
+    fun ({Label, S}) ->
       NewNode = digraph:add_vertex(Graph),
-      digraph:add_edge(Graph, CurrentNode, NewNode, [{send, T}]),
-      create_fsm(Graph, Tail, NewNode);
-    {recv, T} ->
+      digraph:add_edge(Graph, CurrentNode, NewNode, [{choose, Label}]),
+      create_fsm(Graph, S, NewNode)
+    end, T);
+
+create_fsm(Graph, [{offer, T}], CurrentNode) ->
+  % Create a state machine for each label
+  lists:map(
+    fun ({Label, S}) ->
       NewNode = digraph:add_vertex(Graph),
-      digraph:add_edge(Graph, CurrentNode, NewNode, [{recv, T}]),
-      create_fsm(Graph, Tail, NewNode);
-    eot ->
-      digraph:add_vertex(Graph, CurrentNode, [final])
-  end;
-create_fsm(_Graph, [], _CurrentNode) ->
-  ok.
+      digraph:add_edge(Graph, CurrentNode, NewNode, [{offer, Label}]),
+      create_fsm(Graph, S, NewNode)
+    end, T);
+
+create_fsm(_Graph, [], CurrentNode) ->
+  CurrentNode.

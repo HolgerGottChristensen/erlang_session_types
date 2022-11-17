@@ -27,8 +27,16 @@
 ]}).
 
 -session({{id1, id3}, [
-  {send, integer},
-  eot
+  {choose, [
+    {ok, [
+      {send, integer},
+      eot
+    ]},
+    {error, [
+      {send, integer},
+      eot
+    ]}
+  ]}
 ]}).
 
 main() ->
@@ -48,8 +56,8 @@ hello1() ->
   end,
   %id2 ! {id1, nice},
   if
-    false -> id3 ! {id1, 42};
-    true -> id3 ! {id1, 420}
+    false -> id3 ! {id1, ok}, id3 ! {id1, 42};
+    true -> id3 ! {id1, error}, id3 ! {id1, 420}
   end,
   % id3 ! {id1, 42},
   receive {id2, Val} when is_integer(Val) ->
