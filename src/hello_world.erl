@@ -76,8 +76,15 @@ hello2() ->
   id1 ! {id2, 42}.
 
 hello3() ->
-  receive {id1, Val} when is_integer(Val) ->
-    io:fwrite("Forms = ~p~n", [Val])
+  receive
+    {id1, ok} ->
+      receive {id1, Val} when is_integer(Val) ->
+        io:fwrite("Forms = ~p~n", [Val])
+      end;
+    {id1, error} ->
+      receive {id1, Val} when is_integer(Val) ->
+        io:fwrite("Forms = ~p~n", [Val])
+      end
   end.
 
 parse() ->
