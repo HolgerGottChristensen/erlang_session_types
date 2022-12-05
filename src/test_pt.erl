@@ -79,11 +79,10 @@ check_function_session(Self, _, {ok, CurrentStates}, {op, _, '!', {atom, _, To},
 
   [[Graph]] = ets:match(table(session_graphs), {{Self, To}, '$0'}),
   {ok, CurrentState} = dict:find(To, CurrentStates),
-  ProgressedCurrentState = progress_state(Self, {ok, CurrentState}, To),
 
   % Check the type of the send matches with the session.
 
-  OutEdges = digraph:out_edges(Graph, ProgressedCurrentState),
+  OutEdges = digraph:out_edges(Graph, CurrentState),
   OutEdgesMapped = lists:map(fun(G) -> digraph:edge(Graph, G) end, OutEdges),
 
   K = lists:search(
@@ -113,11 +112,10 @@ check_function_session(Self, FnName, {ok, CurrentStates}, {'receive', _, [{claus
 
   [[Graph]] = ets:match(table(session_graphs), {{Self, From}, '$0'}),
   {ok, CurrentState} = dict:find(From, CurrentStates),
-  ProgressedCurrentState = progress_state(Self, {ok, CurrentState}, From),
 
   % Check the type of the send matches with the session.
 
-  OutEdges = digraph:out_edges(Graph, ProgressedCurrentState),
+  OutEdges = digraph:out_edges(Graph, CurrentState),
   OutEdgesMapped = lists:map(fun(G) -> digraph:edge(Graph, G) end, OutEdges),
 
   Ty = case TyFun of
@@ -155,11 +153,10 @@ check_function_session(Self, FnName, {ok, CurrentStates}, {'receive', _, [{claus
   % Check if the clause thing matches
   [[Graph]] = ets:match(table(session_graphs), {{Self, From}, '$0'}),
   {ok, CurrentState} = dict:find(From, CurrentStates),
-  ProgressedCurrentState = progress_state(Self, {ok, CurrentState}, From),
 
   % Check the type of the send matches with the session.
 
-  OutEdges = digraph:out_edges(Graph, ProgressedCurrentState),
+  OutEdges = digraph:out_edges(Graph, CurrentState),
   OutEdgesMapped = lists:map(fun(G) -> digraph:edge(Graph, G) end, OutEdges),
 
   Offers = [{Offer, Body}] ++ lists:map(fun({clause, _, [{tuple, _, [{atom, _, _}, {atom, _, Offer2}]}], _, Body2}) ->
@@ -184,12 +181,10 @@ check_function_session(Self, FnName, {ok, CurrentStates}, {'receive', _, [{claus
       end
     end, ExpectedOffers),
 
-  ProgressedMapped = lists:map(fun(NewCurrentStates) -> progress_states(Self, NewCurrentStates) end, Mapped),
-
-  V = lists:all(fun(Elem) -> Elem == lists:nth(1, ProgressedMapped) end, ProgressedMapped),
+  V = lists:all(fun(Elem) -> Elem == lists:nth(1, Mapped) end, Mapped),
   if
     V -> lists:nth(1, Mapped);
-    true -> {error, io:format("~s~w~n", [color:red("All offers are not equal: "), ProgressedMapped])}
+    true -> {error, io:format("~s~w~n", [color:red("All offers are not equal: "), Mapped])}
   end;
 check_function_session(_, FnName, {ok, CurrentStates}, {call, _, {atom, _, FnName}, _}) ->
   List = dict:to_list(CurrentStates),
@@ -234,20 +229,18 @@ check_function_session(Self, FnName, CurrentStates, {clause, _, _, _, Body}) ->
 % If statements
 check_function_session(Self, FnName, CurrentStates, {'if', _, Clauses}) ->
   Mapped = lists:map(fun({clause, _, _, _, Body}) -> check_function_session(Self, FnName, CurrentStates, Body) end, Clauses),
-  ProgressedMapped = lists:map(fun(NewCurrentStates) -> progress_states(Self, NewCurrentStates) end, Mapped),
-  V = lists:all(fun(Elem) -> Elem == lists:nth(1, ProgressedMapped) end, ProgressedMapped),
+  V = lists:all(fun(Elem) -> Elem == lists:nth(1, Mapped) end, Mapped),
   if
     V -> lists:nth(1, Mapped);
-    true -> {error, io:format("~s~w~n", [color:red("All if branches are not equal: "), ProgressedMapped])}
+    true -> {error, io:format("~s~w~n", [color:red("All if branches are not equal: "), Mapped])}
   end;
 
 check_function_session(Self, FnName, CurrentStates, {'case', _, _, Clauses}) ->
   Mapped = lists:map(fun({clause, _, _, _, Body}) -> check_function_session(Self, FnName, CurrentStates, Body) end, Clauses),
-  ProgressedMapped = lists:map(fun(NewCurrentStates) -> progress_states(Self, NewCurrentStates) end, Mapped),
-  V = lists:all(fun(Elem) -> Elem == lists:nth(1, ProgressedMapped) end, ProgressedMapped),
+  V = lists:all(fun(Elem) -> Elem == lists:nth(1, Mapped) end, Mapped),
   if
     V -> lists:nth(1, Mapped);
-    true -> {error, io:format("~s~w~n", [color:red("All cases are not equal: "), ProgressedMapped])}
+    true -> {error, io:format("~s~w~n", [color:red("All cases are not equal: "), Mapped])}
   end;
 check_function_session(_, _, _, T) ->
   {error, io:format("~s~p~n~n", [color:red("Not matched against: "), T])}.
@@ -354,18 +347,10 @@ create_fsm(Graph, [eot], CurrentNode) ->
   Label = node_label(digraph:vertex(Graph, CurrentNode)),
   digraph:add_vertex(Graph, CurrentNode, [final | Label]);
 
-create_fsm(Graph, [eot | _], CurrentNode) -> % This should be an error
-  Label = node_label(digraph:vertex(Graph, CurrentNode)),
-  digraph:add_vertex(Graph, CurrentNode, [final | Label]);
-
 create_fsm(Graph, [{label, T} | Tail], CurrentNode) ->
   Label = node_label(digraph:vertex(Graph, CurrentNode)),
   digraph:add_vertex(Graph, CurrentNode, [{label, T} | Label]),
   create_fsm(Graph, Tail, CurrentNode);
-
-create_fsm(Graph, [{goto, T} | _], CurrentNode) -> % This should be an error
-  {value, {EndNode, _}} = node_id_with_label(Graph, T),
-  digraph:add_edge(Graph, CurrentNode, EndNode, []);
 
 create_fsm(Graph, [{goto, T}], CurrentNode) ->
   {value, {EndNode, _}} = node_id_with_label(Graph, T),
@@ -375,10 +360,12 @@ create_fsm(Graph, [{send, T} | Tail], CurrentNode) ->
   NewNode = digraph:add_vertex(Graph),
   digraph:add_edge(Graph, CurrentNode, NewNode, [{send, T}]),
   create_fsm(Graph, Tail, NewNode);
+
 create_fsm(Graph, [{recv, T} | Tail], CurrentNode) ->
   NewNode = digraph:add_vertex(Graph),
   digraph:add_edge(Graph, CurrentNode, NewNode, [{recv, T}]),
   create_fsm(Graph, Tail, NewNode);
+
 create_fsm(Graph, [{choose, T} | Tail], CurrentNode) ->
   % Create a state machine for each label
   NewNodes = lists:map(
@@ -417,37 +404,6 @@ create_fsm(Graph, [{offer, T} | Tail], CurrentNode) ->
 
 create_fsm(_Graph, [], CurrentNode) ->
   CurrentNode.
-
-
-progress_states(_, {error, S}) ->
-  {error, S};
-progress_states(Self, {ok, CurrentStates}) ->
-  {ok, dict:map(
-    fun(Key, CurrentState) ->
-      progress_state(Self, {ok, CurrentState}, Key)
-    end, CurrentStates)}.
-
-
-progress_state(_, {error, S}, _) ->
-  {error, S};
-progress_state(Self, {ok, CurrentState}, Other) ->
-  [[Graph]] = ets:match(table(session_graphs), {{Self, Other}, '$0'}),
-  OutEdges = digraph:out_edges(Graph, CurrentState),
-  OutEdgesMapped = lists:map(fun(G) -> digraph:edge(Graph, G) end, OutEdges),
-  K = lists:search(
-    fun(T) ->
-      case T of
-        {_, _, _, []} -> true;
-        _ -> false
-      end
-    end, OutEdgesMapped),
-
-  case K of
-    {value, {_, _, ResState, _}} ->
-      ResState;
-    false ->
-      CurrentState
-  end.
 
 % Iterate through each node
 % If the first outgoing edge is empty, move all ingoing edges to point to the resulting node.
