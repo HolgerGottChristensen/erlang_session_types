@@ -1,7 +1,7 @@
 -module(hello_world2).
 
 %% API
-%-compile([{parse_transform, test_pt}]).
+%-compile([{parse_transform, session_check}]).
 -compile([export_all]).
 
 -register([
@@ -38,7 +38,6 @@ main() ->
   register(id1, PID1),
   register(id2, PID2),
   register(id3, PID3).
-% a(x).b(y). !x . ?y         |        /a(z)./b(t). ?z.  !t
 
 hello1() ->
   id2 ! {id1, 42},

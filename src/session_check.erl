@@ -1,4 +1,4 @@
--module(test_pt).
+-module(session_check).
 
 -export([parse_transform/2]).
 
@@ -71,12 +71,11 @@ table(Atom) ->
   [[Res]] = ets:match(tables, {{Atom, self()}, '$0'}),
   Res.
 
+
 check_function_session(_, _, {error, S}, _) ->
   {error, S};
-check_function_session(Self, _, {ok, CurrentStates}, {op, _, '!', {atom, _, To}, {tuple, _, [{atom, _, Self}, {Ty, _, V}]}}) ->
-  %io:fwrite("Send: ~n", []),
-  %lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
 
+check_function_session(Self, _, {ok, CurrentStates}, {op, _, '!', {atom, _, To}, {tuple, _, [{atom, _, Self}, {Ty, _, V}]}}) ->
   [[Graph]] = ets:match(table(session_graphs), {{Self, To}, '$0'}),
   {ok, CurrentState} = dict:find(To, CurrentStates),
 
@@ -96,20 +95,14 @@ check_function_session(Self, _, {ok, CurrentStates}, {op, _, '!', {atom, _, To},
 
   case K of
     {value, {_, _, ResState, _}} ->
-      %io:fwrite("Found: ~p~n", [ResState]),
       NewCurrentStates = dict:store(To, ResState, CurrentStates),
-      %io:fwrite("Send: ~p, To: ~p~n~n", [V, To]),
-
-      %lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
       {ok, NewCurrentStates};
     false ->
       Possible = lists:map(fun({_, _, _, [B]}) -> B end, OutEdgesMapped),
       {error, io:format("~s~w~s~w~n", [color:red("Could not find a suitable send edge in the fsm with type: "), Ty, color:red(". Exprected one of: "), Possible])}
   end;
-check_function_session(Self, FnName, {ok, CurrentStates}, {'receive', _, [{clause, _, [{tuple, _, [{atom, _, From}, {var, _, Val}]}], [[{call, _, {atom, _, TyFun}, [{var, _, Val}]}]], Body}]}) ->
-  %io:fwrite("Receive: ~p ~p ~p~n~n", [From, TyFun, Val]),
-  %lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
 
+check_function_session(Self, FnName, {ok, CurrentStates}, {'receive', _, [{clause, _, [{tuple, _, [{atom, _, From}, {var, _, Val}]}], [[{call, _, {atom, _, TyFun}, [{var, _, Val}]}]], Body}]}) ->
   [[Graph]] = ets:match(table(session_graphs), {{Self, From}, '$0'}),
   {ok, CurrentState} = dict:find(From, CurrentStates),
 
@@ -137,13 +130,8 @@ check_function_session(Self, FnName, {ok, CurrentStates}, {'receive', _, [{claus
 
   case K of
     {value, {_, _, ResState, _}} ->
-      %io:fwrite("Found: ~p~n", [ResState]),
       NewCurrentStates = dict:store(From, ResState, CurrentStates),
-      %io:fwrite("Send: ~p, To: ~p~n~n", [V, From]),
-
-      %lists:foreach(fun(G) -> io:fwrite("~p~n", [G]) end, ets:tab2list(current_session)),
       NewCurrentStates2 = check_function_session(Self, FnName, {ok, NewCurrentStates}, Body),
-
       NewCurrentStates2;
     false ->
       Possible = lists:map(fun({_, _, _, [B]}) -> B end, OutEdgesMapped),
@@ -159,8 +147,10 @@ check_function_session(Self, FnName, {ok, CurrentStates}, {'receive', _, [{claus
   OutEdges = digraph:out_edges(Graph, CurrentState),
   OutEdgesMapped = lists:map(fun(G) -> digraph:edge(Graph, G) end, OutEdges),
 
-  Offers = [{Offer, Body}] ++ lists:map(fun({clause, _, [{tuple, _, [{atom, _, _}, {atom, _, Offer2}]}], _, Body2}) ->
-    {Offer2, Body2} end, TailClauses),
+  Offers = [{Offer, Body}] ++ lists:map(
+    fun ({clause, _, [{tuple, _, [{atom, _, _}, {atom, _, Offer2}]}], _, Body2}) ->
+      {Offer2, Body2}
+    end, TailClauses),
 
   ExpectedOffers = lists:filtermap(
     fun(T) ->
@@ -261,9 +251,6 @@ check_sessions({function, _, Name, 0, Body}) ->
       io:fwrite("Relevant initial states:~n", []),
 
       lists:foreach(fun(G) -> io:fwrite("\t~p~n", [G]) end, dict:to_list(CurrentStates)),
-      %io:fwrite("===~n", []),
-      %io:fwrite("~p~n", [Body]),
-      %io:fwrite("======~n~n", []),
 
       io:fwrite("Check output:~n", []),
 
@@ -297,7 +284,6 @@ check_sessions({function, _, Name, 0, Body}) ->
 check_sessions({function, _, _, Error, _}) ->
   {error, io:format("~s~w~n", [color:red("Only functions of arity 0 are allowed: "), Error])};
 check_sessions(_T) ->
-  %io:fwrite("Not considered: ~p~n~n", [T]),
   continue.
 
 
@@ -311,7 +297,6 @@ do_transform({attribute, _, register, Value}) ->
   io:fwrite("Register Attribute: ~w~n", [Value]),
   continue;
 do_transform(_T) ->
-  %io:fwrite("Not considered: ~p~n~n", [T]),
   continue.
 
 
@@ -330,9 +315,9 @@ dualize(SessionType) ->
     end, SessionType).
 
 
-node_label({[_ | _], Label}) ->
+name({[_ | _], Label}) ->
   Label;
-node_label({_, Label}) ->
+name({_, Label}) ->
   Label.
 
 node_id_with_label(Graph, Lab) ->
@@ -344,11 +329,11 @@ node_id_with_label(Graph, Lab) ->
   Id.
 
 create_fsm(Graph, [eot], CurrentNode) ->
-  Label = node_label(digraph:vertex(Graph, CurrentNode)),
+  Label = name(digraph:vertex(Graph, CurrentNode)),
   digraph:add_vertex(Graph, CurrentNode, [final | Label]);
 
 create_fsm(Graph, [{label, T} | Tail], CurrentNode) ->
-  Label = node_label(digraph:vertex(Graph, CurrentNode)),
+  Label = name(digraph:vertex(Graph, CurrentNode)),
   digraph:add_vertex(Graph, CurrentNode, [{label, T} | Label]),
   create_fsm(Graph, Tail, CurrentNode);
 

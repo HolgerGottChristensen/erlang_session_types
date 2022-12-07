@@ -1,7 +1,7 @@
 -module(hello_world).
 
 %% API
--compile([{parse_transform, test_pt}]).
+-compile([{parse_transform, session_check}]).
 -compile([export_all]).
 
 -register([
