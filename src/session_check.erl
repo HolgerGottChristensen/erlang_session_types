@@ -2,6 +2,7 @@
 
 -export([parse_transform/2]).
 
+
 parse_transform(Forms, _Options) ->
   io:fwrite("~n~s: ~p~n", [color:blue("Performing type check of session types..."), self()]),
 
@@ -102,6 +103,7 @@ check_function_session(Self, _, {ok, CurrentStates}, {op, _, '!', {atom, _, To},
       {error, io:format("~s~w~s~w~n", [color:red("Could not find a suitable send edge in the fsm with type: "), Ty, color:red(". Exprected one of: "), Possible])}
   end;
 
+% Receiving messages
 check_function_session(Self, FnName, {ok, CurrentStates}, {'receive', _, [{clause, _, [{tuple, _, [{atom, _, From}, {var, _, Val}]}], [[{call, _, {atom, _, TyFun}, [{var, _, Val}]}]], Body}]}) ->
   [[Graph]] = ets:match(table(session_graphs), {{Self, From}, '$0'}),
   {ok, CurrentState} = dict:find(From, CurrentStates),
@@ -135,15 +137,15 @@ check_function_session(Self, FnName, {ok, CurrentStates}, {'receive', _, [{claus
       NewCurrentStates2;
     false ->
       Possible = lists:map(fun({_, _, _, [B]}) -> B end, OutEdgesMapped),
-      {error, io:format("~s~w~s~w~n", [color:red("Could not find a suitable recv edge in the fsm with type: "), Ty, color:red(". Exprected one of: "), Possible])}
+      {error, io:format("~sprw~s~w~n", [color:red("Could not find a suitable recv edge in the fsm with type: "), Ty, color:red(". Exprected one of: "), Possible])}
   end;
+% Receiving offers
 check_function_session(Self, FnName, {ok, CurrentStates}, {'receive', _, [{clause, _, [{tuple, _, [{atom, _, From}, {atom, _, Offer}]}], _, Body} | TailClauses]}) ->
   % Check if the clause thing matches
   [[Graph]] = ets:match(table(session_graphs), {{Self, From}, '$0'}),
   {ok, CurrentState} = dict:find(From, CurrentStates),
 
   % Check the type of the send matches with the session.
-
   OutEdges = digraph:out_edges(Graph, CurrentState),
   OutEdgesMapped = lists:map(fun(G) -> digraph:edge(Graph, G) end, OutEdges),
 
@@ -205,7 +207,7 @@ check_function_session(_, _, CurrentStates, {call, _, Error, _}) ->
   io:fwrite("~s~w~n", [color:yellow("Function calls are currently not considered: "), Error]),
   CurrentStates;
 
-% List of items
+% List of statements
 check_function_session(Self, FnName, CurrentStates, [StmtHd | StmtTail]) ->
   lists:foldl(
     fun(Elem, Acc) ->
@@ -218,16 +220,22 @@ check_function_session(Self, FnName, CurrentStates, {clause, _, _, _, Body}) ->
 
 % If statements
 check_function_session(Self, FnName, CurrentStates, {'if', _, Clauses}) ->
+  % Call all cases with the current state as the input and collected the resulting states.
   Mapped = lists:map(fun({clause, _, _, _, Body}) -> check_function_session(Self, FnName, CurrentStates, Body) end, Clauses),
+  % Check that all elements in the mapped list are equal
   V = lists:all(fun(Elem) -> Elem == lists:nth(1, Mapped) end, Mapped),
+  % If they are all equal, return the element.
   if
     V -> lists:nth(1, Mapped);
     true -> {error, io:format("~s~w~n", [color:red("All if branches are not equal: "), Mapped])}
   end;
 
 check_function_session(Self, FnName, CurrentStates, {'case', _, _, Clauses}) ->
+  % Call all cases with the current state as the input and collected the resulting states.
   Mapped = lists:map(fun({clause, _, _, _, Body}) -> check_function_session(Self, FnName, CurrentStates, Body) end, Clauses),
+  % Check that all elements in the mapped list are equal
   V = lists:all(fun(Elem) -> Elem == lists:nth(1, Mapped) end, Mapped),
+  % If they are all equal, return the element.
   if
     V -> lists:nth(1, Mapped);
     true -> {error, io:format("~s~w~n", [color:red("All cases are not equal: "), Mapped])}
@@ -315,10 +323,11 @@ dualize(SessionType) ->
     end, SessionType).
 
 
-name({[_ | _], Label}) ->
+current_labels({[_ | _], Label}) ->
   Label;
-name({_, Label}) ->
+current_labels({_, Label}) ->
   Label.
+
 
 node_id_with_label(Graph, Lab) ->
   {_, Vertices, _Edges, _Neighbours, _Cyclic} = Graph,
@@ -328,12 +337,13 @@ node_id_with_label(Graph, Lab) ->
     end, ets:tab2list(Vertices)),
   Id.
 
+
 create_fsm(Graph, [eot], CurrentNode) ->
-  Label = name(digraph:vertex(Graph, CurrentNode)),
+  Label = current_labels(digraph:vertex(Graph, CurrentNode)),
   digraph:add_vertex(Graph, CurrentNode, [final | Label]);
 
 create_fsm(Graph, [{label, T} | Tail], CurrentNode) ->
-  Label = name(digraph:vertex(Graph, CurrentNode)),
+  Label = current_labels(digraph:vertex(Graph, CurrentNode)),
   digraph:add_vertex(Graph, CurrentNode, [{label, T} | Label]),
   create_fsm(Graph, Tail, CurrentNode);
 
