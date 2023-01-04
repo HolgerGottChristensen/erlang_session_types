@@ -137,7 +137,7 @@ check_function_session(Self, FnName, {ok, CurrentStates}, {'receive', _, [{claus
       NewCurrentStates2;
     false ->
       Possible = lists:map(fun({_, _, _, [B]}) -> B end, OutEdgesMapped),
-      {error, io:format("~sw~s~w~n", [color:red("Could not find a suitable recv edge in the fsm with type: "), Ty, color:red(". Expected one of: "), Possible])}
+      {error, io:format("~s~w~s~w~n", [color:red("Could not find a suitable recv edge in the fsm with type: "), Ty, color:red(". Expected one of: "), Possible])}
   end;
 % Receiving offers
 check_function_session(Self, FnName, {ok, CurrentStates}, {'receive', _, [{clause, _, [{tuple, _, [{atom, _, From}, {atom, _, Offer}]}], _, Body} | TailClauses]}) ->

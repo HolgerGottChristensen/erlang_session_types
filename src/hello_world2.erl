@@ -1,7 +1,7 @@
 -module(hello_world2).
 
 %% API
-%-compile([{parse_transform, session_check}]).
+-compile([{parse_transform, session_check}]).
 -compile([export_all]).
 
 -register([

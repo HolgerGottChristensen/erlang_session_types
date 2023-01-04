@@ -1,7 +1,7 @@
 -module(incorrect_order).
 
 %% API
--compile([{parse_transform, session_check}]).
+%-compile([{parse_transform, session_check}]).
 -compile([export_all]).
 
 -register([
